@@ -4,7 +4,7 @@ import {formatTime} from '../../utils/date'; // Переконайтесь, що
 interface ProgressProps {
     duration: number;
     currentTime: number;
-    onSeek: (time: number) => void; // Callback для перемотування
+    onSeek: (time: number) => void;
 }
 
 const Progress: React.FC<ProgressProps> = ({duration, currentTime, onSeek}) => {
@@ -15,13 +15,9 @@ const Progress: React.FC<ProgressProps> = ({duration, currentTime, onSeek}) => {
 
     const calculateTime = (event: React.MouseEvent<HTMLDivElement>): number => {
         if (!progressBarRef.current || !duration) return 0;
-
         const rect = progressBarRef.current.getBoundingClientRect();
-        // Отримуємо X координату кліку/курсору відносно елемента
         const clickX = event.clientX - rect.left;
-        // Обчислюємо частку від загальної ширини
         const widthFraction = Math.max(0, Math.min(1, clickX / rect.width));
-        // Обчислюємо час, що відповідає цій позиції
         return widthFraction * duration;
     };
 
@@ -29,12 +25,9 @@ const Progress: React.FC<ProgressProps> = ({duration, currentTime, onSeek}) => {
         if (!duration) return;
         const time = calculateTime(event);
         const posX = event.clientX - (progressBarRef.current?.getBoundingClientRect().left ?? 0);
-
         setHoverTime(time);
         setHoverPositionX(posX);
-        if (!isHovering) {
-            setIsHovering(true);
-        }
+        if (!isHovering) setIsHovering(true);
     };
 
     const handleMouseLeave = () => {
@@ -44,41 +37,43 @@ const Progress: React.FC<ProgressProps> = ({duration, currentTime, onSeek}) => {
     const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
         if (!duration) return;
         const time = calculateTime(event);
-        onSeek(time); // Викликаємо callback для перемотування
+        onSeek(time);
     };
 
-    // Запобігаємо діленню на нуль або отриманню NaN/Infinity
-    const progressPercent = (duration > 0 && Number.isFinite(duration))
-        ? Math.min(100, (currentTime / duration) * 100)
+    // Розрахунок відсотка прогресу
+    const progressPercent = (duration > 0 && Number.isFinite(duration) && Number.isFinite(currentTime))
+        ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) // Додано перевірку currentTime та Math.max
         : 0;
+
+    // console.log(`Progress Rendering: currentTime=${currentTime.toFixed(2)}, percent=${progressPercent.toFixed(2)}%`); // Додатковий лог
 
     return (
         <div
             ref={progressBarRef}
-            className='relative w-full bg-gray-600 rounded-full h-2 cursor-pointer group' // Додано group для керування tooltip
+            className='relative w-full bg-gray-600 rounded-full h-2 cursor-pointer group'
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
             onClick={handleClick}
         >
-            {/* Смуга прогресу */}
+            {/* Смуга прогресу (без transition) */}
             <div
-                className="absolute left-0 top-0 rounded-full bg-primary h-2 transition-all duration-75 ease-linear" // Плавний перехід для currentTime
+                className="absolute left-0 top-0 rounded-full bg-primary h-2"
                 style={{width: `${progressPercent}%`}}
             ></div>
 
-            {/* Маркер поточного часу (опціонально, робить його помітнішим) */}
+            {/* Маркер поточного часу (без transition) */}
             <div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-secondary rounded-full shadow -ml-2 pointer-events-none transition-all duration-75 ease-linear" // Забороняємо події миші для маркера
+                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-secondary rounded-full shadow -ml-2 pointer-events-none"
                 style={{left: `${progressPercent}%`}}
             ></div>
 
-            {/* Tooltip (спливаюче вікно) */}
+            {/* Tooltip */}
             {isHovering && duration > 0 && (
                 <div
-                    className="absolute bottom-full mb-2 px-2 py-1 bg-black bg-opacity-70 text-white text-xs rounded pointer-events-none whitespace-nowrap" // Забороняємо події миші
+                    className="absolute bottom-full mb-2 px-2 py-1 bg-black bg-opacity-70 text-white text-xs rounded pointer-events-none whitespace-nowrap"
                     style={{
                         left: `${hoverPositionX}px`,
-                        transform: 'translateX(-50%)', // Центруємо над курсором
+                        transform: 'translateX(-50%)',
                     }}
                 >
                     {formatTime(hoverTime)}
