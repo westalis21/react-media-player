@@ -1,7 +1,7 @@
 {
   "name": "video-player",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "homepage": "https://github.com/westalis21/react-media-player",
   "description": "A simple video player built with Electron and React.",

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {store, VideoHistoryEntry} from "./store.ts";
+import * as fs from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -10,6 +11,7 @@ process.env.APP_ROOT = path.join(__dirname, '..');
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist');
+export const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'webm', 'mov', 'wmv', 'flv', 'ogv', 'mpg', 'mpeg', '3gp']
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST;
 
@@ -146,7 +148,7 @@ ipcMain.handle('dialog:openFile', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, { // Передаємо батьківське вікно
     properties: ['openFile'],
     filters: [
-      { name: 'Відеофайли', extensions: ['mp4', 'mkv', 'avi', 'webm', 'mov', 'wmv', 'flv', 'ogv', 'mpg', 'mpeg', '3gp'] }, // Додав ще кілька
+      { name: 'Відеофайли', extensions: VIDEO_EXTENSIONS}, // Додав ще кілька
       { name: 'Всі файли', extensions: ['*'] }
     ]
   });
@@ -216,6 +218,25 @@ ipcMain.handle('save-video-progress', async (_event, data: { filePath: string; c
   }
 });
 
+ipcMain.handle('get-directory-videos', async (_event, filePath) => {
+  if (!filePath) return [];
+  try {
+    const dir = path.dirname(filePath);
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const videoFiles = entries
+        .filter(entry => entry.isFile() && VIDEO_EXTENSIONS.includes(path.extname(entry.name).toLowerCase()))
+        .map(entry => path.join(dir, entry.name)); // Отримуємо повні шляхи
+
+    // Просте алфавітне сортування. Відтворення точного сортування ОС є складним.
+    videoFiles.sort((a, b) => a.localeCompare(b));
+
+    console.log(`[Main] Found videos in ${dir}:`, videoFiles.length);
+    return videoFiles;
+  } catch (error) {
+    console.error(`[Main] Error reading directory for ${filePath}:`, error);
+    return []; // Повертаємо порожній масив у разі помилки
+  }
+});
 
 // --- Допоміжна функція для пошуку шляху до файлу в аргументах ---
 function findFilePathInArgs(argv: string[]): string | null {
