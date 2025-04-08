@@ -3,7 +3,7 @@ import {throttle} from 'lodash';
 import {IpcRendererEvent} from 'electron';
 import {getFileName} from "./utils/getFileName.ts";
 import {formatTime} from "./utils/date.ts";
-import Progress from "./components/progress/Progress.tsx"; // Переконайтесь, що цей шлях правильний
+import Progress from "./components/progress/Progress.tsx";
 
 // --- Інтерфейси ---
 interface RecentVideo {
@@ -28,10 +28,11 @@ declare global {
 
 // --- Константи ---
 const SEEK_SECONDS = 5;
+const VOLUME_STEP = 0.1; // Крок зміни гучності (10%)
 
 // --- Компонент App ---
 function App() {
-    // --- Стан відео та плеєра ---
+    // --- Стан ---
     const [videoSrc, setVideoSrc] = useState<string | null>(null);
     const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState<string>('');
@@ -39,18 +40,12 @@ function App() {
     const [displayCurrentTime, setDisplayCurrentTime] = useState<number>(0);
     const [displayDuration, setDisplayDuration] = useState<number>(0);
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
-    const [isSeeking, setIsSeeking] = useState<boolean>(false); // Відстеження активної перемотки
-
-    // --- Стан недавніх відео ---
+    const [isSeeking, setIsSeeking] = useState<boolean>(false);
     const [recentVideos, setRecentVideos] = useState<RecentVideo[]>([]);
     const [isLoadingRecents, setIsLoadingRecents] = useState<boolean>(true);
-
-    // --- Стан для навігації по папці ---
     const [directoryVideos, setDirectoryVideos] = useState<string[]>([]);
     const [currentVideoIndex, setCurrentVideoIndex] = useState<number>(-1);
     const [isLoadingDirectory, setIsLoadingDirectory] = useState<boolean>(false);
-
-    // --- Стан гучності ---
     const [volume, setVolume] = useState<number>(1);
     const [isMuted, setIsMuted] = useState<boolean>(false);
 
@@ -60,106 +55,98 @@ function App() {
     const animationFrameRef = useRef<number | null>(null);
     const volumeBeforeMute = useRef<number>(1);
 
-    // --- Оновлення часу в UI (спрощено) ---
-    // Ця функція буде викликатись циклічно через requestAnimationFrame
+    // --- Оновлення часу в UI ---
     const updateDisplayTime = useCallback(() => {
-        if (videoRef.current && !isSeeking) { // Не оновлюємо з відео під час перемотки
+        if (videoRef.current && !isSeeking) {
             const newTime = videoRef.current.currentTime;
             setDisplayCurrentTime(newTime);
         }
-        // Плануємо наступний виклик *тільки* якщо цикл ще активний (animationFrameRef.current не null)
         if (animationFrameRef.current) {
             animationFrameRef.current = requestAnimationFrame(updateDisplayTime);
         }
-    }, [isSeeking]); // Залежить від isSeeking
+    }, [isSeeking]);
 
-    // --- Запуск циклу оновлення ---
+    // --- Керування циклом оновлення ---
     const startUpdateTimeLoop = useCallback(() => {
-        // console.log("Attempting to START update loop.");
-        if (animationFrameRef.current) {
-            cancelAnimationFrame(animationFrameRef.current);
-        }
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = requestAnimationFrame(updateDisplayTime);
-        // console.log("Update loop STARTED. Frame:", animationFrameRef.current);
     }, [updateDisplayTime]);
 
-    // --- Зупинка циклу оновлення ---
     const stopUpdateTimeLoop = useCallback(() => {
-        // console.log("Attempting to STOP update loop. Frame:", animationFrameRef.current);
         if (animationFrameRef.current) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = null;
-            // console.log("Update loop STOPPED.");
-            // Оновлюємо час востаннє при явній зупинці
-            if (videoRef.current) {
-                setDisplayCurrentTime(videoRef.current.currentTime);
-            }
+            if (videoRef.current) setDisplayCurrentTime(videoRef.current.currentTime);
         }
     }, []);
 
-    // --- Ефект для керування циклом оновлення на основі isPlaying ---
     useEffect(() => {
-        // console.log("isPlaying effect triggered. isPlaying:", isPlaying);
         if (isPlaying) {
             startUpdateTimeLoop();
         } else {
             stopUpdateTimeLoop();
         }
-        // Функція очищення
-        return () => {
-            // console.log("Cleanup isPlaying effect");
-            stopUpdateTimeLoop();
-        };
+        return () => stopUpdateTimeLoop();
     }, [isPlaying, startUpdateTimeLoop, stopUpdateTimeLoop]);
 
     // --- Збереження прогресу ---
     const saveProgress = useCallback(throttle((videoElement: HTMLVideoElement, filePath: string) => {
-        if (!videoElement || !filePath || !window.ipcRenderer?.invoke || isSeeking) return; // Не зберігаємо під час перемотки
+        if (!videoElement || !filePath || !window.ipcRenderer?.invoke || isSeeking) return;
         const currentTime = videoElement.currentTime;
         const duration = videoElement.duration;
         if (!isNaN(duration) && duration > 5 && currentTime >= 0) {
             window.ipcRenderer.invoke('save-video-progress', {filePath, currentTime, duration})
                 .catch(err => console.error("[Renderer] Failed to save progress:", err));
         }
-    }, 5000, {leading: false, trailing: true}), [isSeeking]); // Додано isSeeking
+    }, 5000, {leading: false, trailing: true}), [isSeeking]);
 
-    // --- Обробка перемотування (з компонента Progress або клавіш) ---
+    // --- Централізована функція зміни гучності ---
+    const setAppVolume = useCallback((newVolume: number) => {
+        // Обмежуємо значення між 0 та 1
+        const clampedVolume = Math.max(0, Math.min(1, newVolume));
+        setVolume(clampedVolume); // Оновлюємо стан React
+
+        if (videoRef.current) {
+            videoRef.current.volume = clampedVolume; // Оновлюємо гучність елемента
+            // Керуємо станом isMuted
+            if (clampedVolume > 0 && isMuted) {
+                setIsMuted(false);
+                videoRef.current.muted = false;
+            } else if (clampedVolume === 0 && !isMuted) {
+                setIsMuted(true);
+                videoRef.current.muted = true;
+            }
+            // Якщо гучність стала > 0 через клавішу, а було Mute, вимикаємо Mute
+            else if (clampedVolume > 0 && videoRef.current.muted) {
+                setIsMuted(false);
+                videoRef.current.muted = false;
+            }
+        }
+    }, [isMuted]); // Залежить від isMuted для коректної роботи з Mute
+
+    // --- Обробка перемотування ---
     const handleSeek = useCallback((time: number) => {
         if (videoRef.current) {
             const duration = videoRef.current.duration;
             if (!isNaN(duration) && duration > 0) {
                 const newTime = Math.max(0, Math.min(time, duration));
-                // console.log(`[Renderer] Seek initiated to: ${newTime.toFixed(2)}`);
-                setIsSeeking(true); // Позначаємо початок перемотки
-                // Негайно оновлюємо UI, щоб повзунок реагував одразу
-                setDisplayCurrentTime(newTime);
-                // Встановлюємо час відео
-                videoRef.current.currentTime = newTime;
+                setIsSeeking(true);
+                setDisplayCurrentTime(newTime); // Оновлюємо UI
+                videoRef.current.currentTime = newTime; // Встановлюємо час відео
 
-                // Зберігаємо прогрес одразу після ініціації перемотки
                 if (currentFilePath && window.ipcRenderer) {
-                    saveProgress.cancel(); // Скасувати попереднє заплановане збереження
-                    //  console.log(`[Renderer] Saving progress immediately after seek init for ${currentFilePath}: ${newTime}`);
+                    saveProgress.cancel();
                     window.ipcRenderer.invoke('save-video-progress', { filePath: currentFilePath, currentTime: newTime, duration })
                         .catch(err => console.error("[Renderer] Failed to save progress on manual seek:", err));
                 }
-                // Скидання isSeeking тепер відбувається в handleSeeked
             }
         }
-    }, [currentFilePath, saveProgress]); // Видалено isSeeking з залежностей
+    }, [currentFilePath, saveProgress]);
 
-    // --- Обробник події onSeeked ---
     const handleSeeked = useCallback(() => {
-        // console.log("Event: onSeeked - Seek completed.");
-        setIsSeeking(false); // Скидаємо флаг після завершення перемотки браузером
-        // Явно оновлюємо час ще раз, особливо якщо відео на паузі
-        if (videoRef.current) {
-            setDisplayCurrentTime(videoRef.current.currentTime);
-        }
-        // Якщо відео грало, цикл оновлення має продовжитись автоматично
-        // завдяки isPlaying=true та скиданню isSeeking
+        setIsSeeking(false);
+        if (videoRef.current) setDisplayCurrentTime(videoRef.current.currentTime);
     }, []);
-
 
     // --- Функція відкриття відео ---
     const openVideo = useCallback(async (filePath: string, timeToSeek: number | null = null, isInitial = false) => {
@@ -168,10 +155,9 @@ function App() {
             if (timeToSeek !== null) handleSeek(timeToSeek);
             return;
         }
-        // console.log(`[Renderer] Opening video: ${filePath}, seek: ${timeToSeek}`);
-        setIsPlaying(false); // Скидаємо стан відтворення
-        setIsSeeking(false); // Скидаємо стан перемотки
-        stopUpdateTimeLoop(); // Зупиняємо старий цикл
+        setIsPlaying(false);
+        setIsSeeking(false);
+        stopUpdateTimeLoop();
         setVideoSrc(null);
         setCurrentFilePath(filePath);
         setSeekToTime(timeToSeek);
@@ -185,7 +171,6 @@ function App() {
         const videoUrl = `local-video://${encodeURI(filePath.replace(/\\/g, '/'))}`;
         document.title = getFileName(filePath);
 
-        // Асинхронно отримуємо список відео
         if (window.ipcRenderer) {
             window.ipcRenderer.invoke('get-directory-videos', filePath)
                 .then((videosInDir: string[]) => {
@@ -195,11 +180,9 @@ function App() {
                 })
                 .catch(err => console.error("[Renderer] Error getting directory videos:", err))
                 .finally(() => setIsLoadingDirectory(false));
-        } else {
-            setIsLoadingDirectory(false);
-        }
+        } else { setIsLoadingDirectory(false); }
 
-        setVideoSrc(videoUrl); // Встановлюємо src
+        setVideoSrc(videoUrl);
 
         if (!isInitial && window.ipcRenderer) {
             window.ipcRenderer.invoke('get-recent-videos')
@@ -210,7 +193,7 @@ function App() {
 
     // --- Завантаження недавніх/початкового відео ---
     useEffect(() => {
-        // ... (логіка не змінилась) ...
+        // ... (без змін) ...
         setErrorMsg('');
         if (!window.ipcRenderer) {
             setErrorMsg('Помилка: Не вдалося зв\'язатися з preload скриптом (ipcRenderer).');
@@ -243,7 +226,6 @@ function App() {
         };
     }, [openVideo]);
 
-
     // --- Обробник кнопки "Відкрити відеофайл" ---
     const handleOpenFileClick = async () => {
         // ... (без змін) ...
@@ -254,11 +236,8 @@ function App() {
         }
         try {
             const filePath: string | null = await window.ipcRenderer.invoke('dialog:openFile');
-            if (filePath) {
-                openVideo(filePath);
-            } else {
-                console.log('[Renderer] File selection cancelled.');
-            }
+            if (filePath) { openVideo(filePath); }
+            else { console.log('[Renderer] File selection cancelled.'); }
         } catch (err: unknown) {
             console.error("[Renderer] Error invoking dialog:openFile:", err);
             const error = err as Error;
@@ -267,33 +246,23 @@ function App() {
     };
 
     // --- Обробники подій відео ---
-
-    // Використовується тільки для throttle збереження
     const handleTimeUpdate = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
-        if (currentFilePath) {
-            saveProgress(event.currentTarget, currentFilePath);
-        }
+        if (currentFilePath) saveProgress(event.currentTarget, currentFilePath);
     }, [currentFilePath, saveProgress]);
 
-    // Встановлює isPlaying, що запускає цикл оновлення
     const handlePlay = useCallback(() => {
-        // console.log("Event: onPlay");
-        setIsSeeking(false); // Переконуємось, що seek не активний при старті
+        setIsSeeking(false);
         setIsPlaying(true);
     }, []);
 
-    // Зупиняє isPlaying, що зупиняє цикл оновлення, зберігає прогрес
     const handlePause = useCallback((event?: React.SyntheticEvent<HTMLVideoElement>) => {
-        // console.log("Event: onPause");
         setIsPlaying(false);
         saveProgress.flush();
-
         const videoElement = event?.currentTarget ?? videoRef.current;
         if (currentFilePath && videoElement && window.ipcRenderer) {
             const currentTime = videoElement.currentTime;
             const duration = videoElement.duration;
             if (!isNaN(duration) && duration > 5 && currentTime >= 0) {
-                // console.log(`[Renderer] Saving progress on PAUSE event for ${currentFilePath}: ${currentTime}`);
                 window.ipcRenderer.invoke('save-video-progress', {filePath: currentFilePath, currentTime, duration})
                     .catch(err => console.error("[Renderer] Failed to save progress on PAUSE event:", err));
             }
@@ -312,58 +281,42 @@ function App() {
         }
     }, [currentVideoIndex, directoryVideos, openVideo, isLoadingDirectory]);
 
-    // Зупиняє isPlaying, переходить до наступного
     const handleEnded = useCallback(() => {
-        // console.log('Event: onEnded');
         setIsPlaying(false);
         if (videoRef.current) setDisplayCurrentTime(videoRef.current.duration);
         playNext();
     }, [playNext]);
 
-    // Завантажує метадані, робить seek, пробує запустити play
     const handleLoadedMetadata = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
-        // console.log('Event: onLoadedMetadata');
         const videoElement = event.currentTarget;
         const duration = videoElement.duration;
         setDisplayDuration(duration);
-
-        videoElement.volume = volume;
-        videoElement.muted = isMuted;
+        videoElement.volume = volume; // Застосовуємо поточну гучність зі стану
+        videoElement.muted = isMuted;  // Застосовуємо поточний стан Mute
 
         let timeToStartFrom = 0;
         if (seekToTime !== null && !isNaN(duration) && duration > 0) {
             timeToStartFrom = Math.max(0, Math.min(seekToTime, duration));
-            // console.log(`[Renderer] Applying seek to ${timeToStartFrom} on load.`);
-            // Важливо: Встановлюємо час *до* спроби play()
             videoElement.currentTime = timeToStartFrom;
             setSeekToTime(null);
         }
-        setDisplayCurrentTime(timeToStartFrom); // Оновлюємо UI
+        setDisplayCurrentTime(timeToStartFrom);
 
-        // Зберігаємо початковий прогрес
         if (currentFilePath && window.ipcRenderer?.invoke && !isNaN(duration)) {
             window.ipcRenderer.invoke('save-video-progress', {filePath: currentFilePath, currentTime: timeToStartFrom, duration})
                 .catch(err => console.error("[Renderer] Failed to save initial duration/time:", err));
         }
 
-        // --- Спроба авто-відтворення ---
-        // console.log("[Renderer] Attempting autoplay...");
         videoElement.play()
-            .then(() => {
-                // console.log("[Renderer] Autoplay initiated successfully.");
-                // Подія onPlay встановить isPlaying=true
-            })
             .catch(error => {
-                // console.warn("[Renderer] Autoplay failed:", error);
-                setIsPlaying(false); // Переконуємось, що стан правильний
+                console.warn("[Renderer] Autoplay failed:", error);
+                setIsPlaying(false);
             });
-
-    }, [currentFilePath, seekToTime, volume, isMuted]); // Залежності
+    }, [currentFilePath, seekToTime, volume, isMuted]); // Додано volume та isMuted до залежностей
 
     const handleVideoError = useCallback((event: React.SyntheticEvent<HTMLVideoElement>) => {
         console.error('[Renderer] Video playback error:', event.nativeEvent);
         setIsPlaying(false);
-        // ... решта логіки помилки ...
         const message = 'Помилка відтворення відео.';
         setErrorMsg(message);
         setVideoSrc(null);
@@ -376,61 +329,46 @@ function App() {
 
     // --- Обробка подвійного кліку ---
     const handleDoubleClick = useCallback(() => {
-        // ... (без змін) ...
         if (!containerRef.current) return;
         if (!document.fullscreenElement) {
             containerRef.current.requestFullscreen().catch(err => {
                 console.error("Error attempting full-screen:", err);
                 setErrorMsg(`Не вдалося увійти в повноекранний режим: ${err.message}`);
             });
-        } else {
-            document.exitFullscreen();
-        }
+        } else { document.exitFullscreen(); }
     }, []);
 
-    // --- Обробка зміни гучності ---
+    // --- Обробка зміни гучності (через повзунок) ---
     const handleVolumeChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-        // ... (без змін) ...
         const newVolume = parseFloat(event.target.value);
-        setVolume(newVolume);
-        if (videoRef.current) {
-            videoRef.current.volume = newVolume;
-            if (newVolume > 0 && isMuted) {
-                setIsMuted(false);
-                videoRef.current.muted = false;
-            } else if (newVolume === 0 && !isMuted) {
-                setIsMuted(true);
-                videoRef.current.muted = true;
-            }
-        }
-    }, [isMuted]);
+        setAppVolume(newVolume); // Використовуємо централізовану функцію
+    }, [setAppVolume]); // Залежить від setAppVolume
 
     // --- Обробка Mute/Unmute ---
     const toggleMute = useCallback(() => {
-        // ... (без змін) ...
         const currentlyMuted = !isMuted;
         setIsMuted(currentlyMuted);
         if (videoRef.current) {
             videoRef.current.muted = currentlyMuted;
             if (currentlyMuted) {
+                // Зберігаємо гучність перед Mute, якщо вона не 0
                 if (volume > 0) volumeBeforeMute.current = volume;
+                // Встановлюємо стан гучності на 0 (це також оновить videoRef.current.volume через setAppVolume, якщо б ми його викликали, але тут простіше напряму)
                 setVolume(0);
+                // videoRef.current.volume = 0; // Це НЕ потрібно, бо .muted = true вже вимикає звук
             } else {
+                // Відновлюємо гучність, яка була до Mute
                 const restoreVolume = volumeBeforeMute.current > 0 ? volumeBeforeMute.current : 0.5;
-                setVolume(restoreVolume);
-                videoRef.current.volume = restoreVolume;
+                setAppVolume(restoreVolume); // Використовуємо setAppVolume для відновлення
             }
         }
-    }, [isMuted, volume]);
+    }, [isMuted, volume, setAppVolume]); // Додано setAppVolume до залежностей
 
-    // --- Обробка кліку на відео (плей/пауза) ---
+    // --- Обробка кліку на відео ---
     const handleVideoClick = useCallback(() => {
         if (videoRef.current) {
-            if (videoRef.current.paused) {
-                videoRef.current.play().catch(e => console.warn("Play failed on click:", e));
-            } else {
-                videoRef.current.pause();
-            }
+            if (videoRef.current.paused) videoRef.current.play().catch(e => console.warn("Play failed on click:", e));
+            else videoRef.current.pause();
         }
     }, []);
 
@@ -440,16 +378,42 @@ function App() {
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
             if (videoSrc && videoRef.current) {
                 switch (event.code) {
-                    case 'Space': event.preventDefault(); handleVideoClick(); break;
-                    case 'ArrowLeft': event.preventDefault(); handleSeek(videoRef.current.currentTime - SEEK_SECONDS); break;
-                    case 'ArrowRight': event.preventDefault(); handleSeek(videoRef.current.currentTime + SEEK_SECONDS); break;
-                    case 'KeyF': event.preventDefault(); handleDoubleClick(); break;
+                    case 'Space':
+                        event.preventDefault();
+                        handleVideoClick();
+                        break;
+                    case 'ArrowLeft':
+                        event.preventDefault();
+                        handleSeek(videoRef.current.currentTime - SEEK_SECONDS);
+                        break;
+                    case 'ArrowRight':
+                        event.preventDefault();
+                        handleSeek(videoRef.current.currentTime + SEEK_SECONDS);
+                        break;
+                    case 'ArrowUp': // Збільшити гучність
+                        event.preventDefault();
+                        setAppVolume(volume + VOLUME_STEP);
+                        break;
+                    case 'ArrowDown': // Зменшити гучність
+                        event.preventDefault();
+                        setAppVolume(volume - VOLUME_STEP);
+                        break;
+                    case 'KeyF':
+                        event.preventDefault();
+                        handleDoubleClick();
+                        break;
+                    // Можна додати 'KeyM' для Mute/Unmute
+                    case 'KeyM':
+                        event.preventDefault();
+                        toggleMute();
+                        break;
                 }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [videoSrc, handleVideoClick, handleSeek, handleDoubleClick]); // Залежності
+        // Оновлено залежності
+    }, [videoSrc, volume, handleVideoClick, handleSeek, handleDoubleClick, setAppVolume, toggleMute]);
 
     // --- Визначення іконки гучності ---
     const getVolumeIcon = () => {
@@ -459,7 +423,6 @@ function App() {
     };
 
     // --- Рендеринг ---
-    // console.log("App Rendering. isPlaying:", isPlaying, "isSeeking:", isSeeking, "currentTime:", displayCurrentTime.toFixed(2)); // Додатковий лог рендерингу
     return (
         <div
             ref={containerRef}
@@ -485,13 +448,13 @@ function App() {
                         className="w-full h-full object-contain outline-none"
                         src={videoSrc}
                         onClick={handleVideoClick}
-                        onTimeUpdate={handleTimeUpdate} // Для throttle збереження
-                        onPlay={handlePlay}             // Встановлює isPlaying=true
-                        onPause={handlePause}           // Встановлює isPlaying=false
-                        onEnded={handleEnded}           // Встановлює isPlaying=false
-                        onLoadedMetadata={handleLoadedMetadata} // Завантажує дані, пробує play
-                        onError={handleVideoError}      // Обробка помилок
-                        onSeeked={handleSeeked}         // Скидає isSeeking=false
+                        onTimeUpdate={handleTimeUpdate}
+                        onPlay={handlePlay}
+                        onPause={handlePause}
+                        onEnded={handleEnded}
+                        onLoadedMetadata={handleLoadedMetadata}
+                        onError={handleVideoError}
+                        onSeeked={handleSeeked}
                     >
                         Ваш браузер не підтримує відтворення цього відео формату.
                     </video>
@@ -503,26 +466,25 @@ function App() {
                         onDoubleClick={(e) => e.stopPropagation()}
                     >
                         <div className="w-full max-w-4xl">
-                            {/* Передаємо актуальний час в Progress */}
                             <Progress
                                 duration={displayDuration}
                                 currentTime={displayCurrentTime}
                                 onSeek={handleSeek}
                             />
-                            {/* ... решта контролів без змін ... */}
                             <div className="flex justify-between items-center text-sm text-gray-300 mt-2 gap-4">
                                 <div className="flex items-center gap-3">
                                     <button onClick={playPrevious} disabled={isLoadingDirectory || currentVideoIndex <= 0} className="px-2 py-1 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed" title="Попереднє відео (←)">⏮️</button>
                                     <button onClick={handleVideoClick} className="px-2 py-1 text-xl hover:text-white" title={isPlaying ? "Пауза (Пробіл)" : "Відтворити (Пробіл)"}>{isPlaying ? '⏸️' : '▶️'}</button>
                                     <button onClick={playNext} disabled={isLoadingDirectory || currentVideoIndex === -1 || currentVideoIndex >= directoryVideos.length - 1} className="px-2 py-1 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed" title="Наступне відео (→)">⏭️</button>
                                     <div className="flex items-center gap-2 volume-control">
-                                        <button onClick={toggleMute} className="px-1 py-1 hover:text-white" title={isMuted ? "Увімкнути звук" : "Вимкнути звук"}>{getVolumeIcon()}</button>
+                                        <button onClick={toggleMute} className="px-1 py-1 hover:text-white" title={isMuted ? "Увімкнути звук (M)" : "Вимкнути звук (M)"}>{getVolumeIcon()}</button>
                                         <input
                                             type="range" min="0" max="1" step="0.05"
-                                            value={isMuted ? 0 : volume}
+                                            // Значення повзунка тепер завжди відображає стан `volume`, навіть якщо isMuted=true
+                                            value={volume}
                                             onChange={handleVolumeChange}
                                             className="w-20 h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-primary"
-                                            title={`Гучність: ${Math.round(volume * 100)}%`}
+                                            title={`Гучність: ${Math.round(volume * 100)}% (↑/↓)`} // Оновлено title
                                         />
                                     </div>
                                 </div>
