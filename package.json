@@ -1,0 +1,93 @@
+{
+  "name": "video-player",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "homepage": "https://github.com/westalis21/react-media-player",
+  "description": "A simple video player built with Electron and React.",
+  "author": {
+    "name": "Rostyslav Havryliuk",
+    "email": "spellmane21@gmail.com"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "dist": "npm run build && ls -l release/ && electron-builder"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.3",
+    "electron-store": "^10.0.1",
+    "lodash": "^4.17.21",
+    "path-browserify": "^1.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.16",
+    "@types/path-browserify": "^1.0.3",
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.21",
+    "electron": "^30.0.1",
+    "electron-builder": "^24.13.3",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "tailwindcss": "^4.1.3",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.6",
+    "vite-plugin-electron": "^0.28.6",
+    "vite-plugin-electron-renderer": "^0.14.5"
+  },
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.westalis.react-video-player",
+    "productName": "ReactVideoPlayer",
+    "files": [
+      "dist-electron/main.js",
+      "dist-electron/preload.mjs",
+      "dist/**/*",
+      "node_modules/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.idea,.vs,.vscode,docs,.yarn}",
+      "!**/*.map",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/electron-store/**"
+    ],
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "AudioVideo;Player;",
+      "icon": "resources/icon.png",
+      "desktop": {
+        "Name": "ReactVideoPlayer",
+        "Comment": "Простий відеоплеєр на Electron та React",
+        "MimeType": "video/mp4;video/mpeg;video/webm;video/ogg;video/quicktime;video/x-msvideo;video/x-matroska;video/x-flv;video/x-ms-wmv;video/avi;video/x-m4v;video/3gpp;video/x-ms-asf;"
+      }
+    }
+  }
+}
