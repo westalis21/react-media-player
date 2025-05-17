@@ -15,16 +15,16 @@ interface RecentVideo {
 }
 
 // --- Глобальний інтерфейс Window ---
-declare global {
-    interface Window {
-        ipcRenderer: {
-            invoke: (channel: string, ...args: any[]) => Promise<any>;
-            send: (channel: string, ...args: any[]) => void;
-            on: (channel: string, listener: (event: IpcRendererEvent, ...args: any[]) => void) => void;
-            off: (channel: string, listener: (...args: any[]) => void) => void;
-        }
-    }
-}
+// declare global {
+//     interface Window {
+//         ipcRenderer: {
+//             invoke: (channel: string, ...args: any[]) => Promise<any>;
+//             send: (channel: string, ...args: any[]) => void;
+//             on: (channel: string, listener: (event: IpcRendererEvent, ...args: any[]) => void) => void;
+//             off: (channel: string, listener: (...args: any[]) => void) => void;
+//         }
+//     }
+// }
 
 // --- Константи ---
 const SEEK_SECONDS = 5;
